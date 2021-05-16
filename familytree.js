@@ -119,11 +119,11 @@ dag.children = [root];
 update(root);
 
 // Finds the oldest person in the data set
-function findOldestPerson(dataSet)
+function findOldestPerson(nodeList)
 {
 	var earliestBd = new Date("01-01-3000"); // Is there a Date.max()?
 	var oldestPerson;
-	all_nodes.forEach( node => 
+	nodeList.forEach( node => 
 	{
 		var currentNodeBd = new Date(node.data.birthyear);
 		if(currentNodeBd < earliestBd)
