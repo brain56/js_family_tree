@@ -83,7 +83,8 @@ dag = d3.dagConnect()(data.links);
 // in order to make the family tree work, the dag
 // must be a node with id undefined. create that node if
 // not done automaticaly
-if(dag.id !=undefined){
+if(dag.id !=undefined)
+{
     root = dag.copy();
     root.id = undefined;
     root.children = [dag];
@@ -92,15 +93,16 @@ if(dag.id !=undefined){
 
 // prepare node data
 var all_nodes = dag.descendants()
-all_nodes.forEach(n => {
-    n.data = data.persons[n.id] ? data.persons[n.id] : data.unions[n.id];
-    n._children = n.children; // all nodes collapsed by default
-    n.children = [];
-    n.inserted_nodes = [];
-    n.inserted_roots = [];
-    n.neighbors = [];
-    n.visible = false;
-    n.inserted_connections = [];
+
+all_nodes.forEach(node => {
+    node.data = data.persons[node.id] ? data.persons[node.id] : data.unions[node.id];
+    node._children = node.children; // all nodes collapsed by default
+    node.children = [];
+    node.inserted_nodes = [];
+    node.inserted_roots = [];
+    node.neighbors = [];
+    node.visible = false;
+    node.inserted_connections = [];
 });
 
 // find root node and assign data
