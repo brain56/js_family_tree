@@ -1,7 +1,7 @@
-
 // extend javascript array class by a remove function
 // copied from https://stackoverflow.com/a/3955096/12267732
-Array.prototype.remove = function () {
+Array.prototype.remove = function () 
+{
     var what, a = arguments, L = a.length, ax;
     while (L && this.length) {
         what = a[--L];
@@ -13,23 +13,22 @@ Array.prototype.remove = function () {
 };
 
 // mark unions
-for (var k in data.unions) {
+for (var k in data.unions) 
+{
     data.unions[k].isUnion = true
 }
 // mark persons
-for (var k in data.persons) {
+for (var k in data.persons) 
+{
     data.persons[k].isUnion = false
 }
 
 // Set the dimensions and margins of the diagram
-var screen_width = document.body.offsetWidth,
-    screen_height = document.documentElement.clientHeight;
-
+var screen_width = document.body.offsetWidth;
+var screen_height = document.documentElement.clientHeight;
 
 // initialize panning, zooming
-var zoom = d3.zoom()
-    .on("zoom", _ => g.attr("transform", d3.event.transform));
-
+var zoom = d3.zoom().on("zoom", _ => g.attr("transform", d3.event.transform));
 
 // initialize tooltips
 var tip = d3.tip()
@@ -63,10 +62,10 @@ const svg = d3.select("body").append("svg")
 const g = svg.append("g");
 
 // helper variables
-var i = 0,
-    duration = 750,
-    x_sep = 120,
-    y_sep = 50;
+var i = 0;
+var duration = 750;
+var x_sep = 120;
+var y_sep = 50;
 
 // declare a dag layout
 var tree = d3.sugiyama()
