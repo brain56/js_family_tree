@@ -106,7 +106,7 @@ all_nodes.forEach(node => {
 });
 
 // find root node and assign data
-root = all_nodes.find(n => n.id == data.start);
+root = findOldestPerson(all_nodes);
 root.visible = true;
 root.neighbors = getNeighbors(root);
 root.x0 = screen_height / 2;
@@ -117,6 +117,23 @@ dag.children = [root];
 
 // draw dag
 update(root);
+
+// Finds the oldest person in the data set
+function findOldestPerson(dataSet)
+{
+	var earliestBd = new Date("01-01-3000"); // Is there a Date.max()?
+	var oldestPerson;
+	all_nodes.forEach( node => 
+	{
+		var currentNodeBd = new Date(node.data.birthyear);
+		if(currentNodeBd < earliestBd)
+		{
+			oldestPerson = node;
+			earliestBd = currentNodeBd;
+		}
+	});
+	return oldestPerson;
+}
 
 // collapse a node
 function collapse(d) {
