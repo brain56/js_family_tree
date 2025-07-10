@@ -1,7 +1,19 @@
-data = {
+/*data = {
     "start":"id4",
     "persons": {
-        "id1": { "id": "id1", "name": "Adam", "birthyear": 1900, "deathyear": 1980, "own_unions": ["u1"], "birthplace":"Alberta", "deathplace":"Austin"},
+        "id1": 
+		{ 
+			"id": "id1", 
+			"own_unions": ["u1"],
+			"partners": [],
+			"parents": [],
+			"tags": [], 
+			"name": "Adam", 
+			"birthyear": 1900, 
+			"birthplace":"Alberta", 
+			"deathyear": 1980, 
+			"deathplace":"Austin"
+		},
         "id2": { "id": "id2", "name": "Berta", "birthyear": 1901, "deathyear": 1985, "own_unions": ["u1"], "birthplace":"Berlin", "deathplace":"Bern" },
         "id3": { "id": "id3", "name": "Charlene", "birthyear": 1930, "deathyear": 2010, "own_unions": ["u3", "u4"], "parent_union": "u1", "birthplace":"Château", "deathplace":"Cuxhaven" },
         "id4": { "id": "id4", "name": "Feliciano", "birthyear": 1926, "deathyear": 2009, "own_unions": [], "parent_union": "u1", "birthplace":"den Haag", "deathplace":"Derince" },
@@ -11,7 +23,7 @@ data = {
         "id8": { "id": "id8", "name": "Heinz", "birthyear": 1970, "own_unions": ["u5"], "parent_union": "u3" },
         "id9": { "id": "id9", "name": "Iver", "birthyear": 1925, "deathyear": 1963, "own_unions": ["u4"] },
         "id10": { "id": "id10", "name": "Jennifer", "birthyear": 1950, "own_unions": [], "parent_union": "u4" },
-        "id11": { "id": "id11", "name": "Klaus", "birthyear": 1933, "deathyear": 2013, "own_unions": [], "parent_union": "u1" },
+        "id11": { "id": "id11", "name": "Klaus", "birthyear": 1833, "deathyear": 2013, "own_unions": [], "parent_union": "u1" },
         "id12": { "id": "id12", "name": "Lennart", "birthyear": 1999, "own_unions": [], "parent_union": "u5" },
     },
     "unions": {
@@ -39,4 +51,54 @@ data = {
         ["id8", "u5"],
         ["u5", "id12"],
     ]
-}
+}*/
+
+// Just a simple array of persons
+/*data = 
+{
+	persons:
+	[
+		"feliciano192X" :
+		{ 
+			id: "feliciano192X", 
+			partners: ["fresca192X"],
+			parents: [],
+			tags: [], 
+			givenName: "Feliciano", 
+			lastName: "Vaño",
+			birthyear: "21-01-1900", 
+			deathyear: "21-01-1980", 
+		},
+		"fresca192X" :
+		{ 
+			id: "fresca192X", 
+			partners: ["feliciano192X"],
+			parents: [],
+			tags: [], 
+			givenName: "Fresca", 
+			lastName: "Vaño",
+			birthyear: "21-01-1900", 
+			deathyear: "21-01-1980", 
+		},
+		"florencia1961" :
+		{ 
+			id: "florencia1961", 
+			partners: [],
+			parents: ["fresca192X", "feliciano192X"],
+			tags: [], 
+			givenName: "Florencia", 
+			lastName: "Vaño",
+			birthyear: "23-02-1961", 
+		},
+		"brian1992" :
+		{ 
+			id: "brian1992", 
+			partners: [],
+			parents: ["florencia1961"],
+			tags: [], 
+			givenName: "Brian", 
+			lastName: "Lee",
+			birthyear: "02-03-1992", 
+		}
+	]
+}*/

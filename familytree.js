@@ -12,6 +12,9 @@ Array.prototype.remove = function ()
     return this;
 };
 
+// Initialize unions list
+generateDagUnions(data)
+
 // mark unions
 for (var k in data.unions) 
 {
@@ -77,6 +80,9 @@ var tree = d3.sugiyama()
         (a, b) => { return 1 }
     );
 
+// Generate links from dataset
+generateDagLinks(data);
+
 // make dag from edge list
 dag = d3.dagConnect()(data.links);
 
@@ -118,7 +124,67 @@ dag.children = [root];
 // draw dag
 update(root);
 
-// Finds the oldest person in the data set
+/** Unions are directed connections between two or more persons that can produce and be LINKED to an offspring */
+function generateDagUnions(dataSet)
+{
+	dataSet.unions = []; 
+	
+	dataSet.forEach(person => 
+	{
+		var partnersList = [];
+		partnersList.push(person);
+		person.partners.forEach(partner => 
+		{
+			partnersList.push(partner);			
+		});
+
+		var unionId = createUniqueUnionId(partnersList);
+		var unionChildren = findUnionChildren(unionId); // BIG TODO HERE!
+
+		var union = 
+		{
+			id: unionId, 
+			partners: partnersList,
+			children: unionChildren,
+		};
+
+		dataSet.unions[unionId] = union;
+	});
+}
+
+/** Returns an array of ID's of all persons who are children of the union with the specified ID*/
+function findUnionChildren(unionId)
+{
+	// TODO
+}
+
+/** Creates a union ID from the alphabetical ordering of inPartnersList */
+function createUniqueUnionId(inPartnersList)
+{
+	// TODO
+}
+
+/** DAG links are directed connections from persons to unions and unions to persons */
+function generateDagLinks(dataSet)
+{
+	dataSet.links = [];
+	
+	dataSet.forEach(person => 
+	{
+		person.parents.forEach(parent => 
+		{
+			var link = [findUnion(parent), person.id];
+			dataSet.links.push(link);
+		});
+	});
+}
+
+function findUnion(parentList)
+{
+	
+}
+
+/** Finds the oldest person in the data set */
 function findOldestPerson(nodeList)
 {
 	var earliestBd = new Date("01-01-3000"); // Is there a Date.max()?
