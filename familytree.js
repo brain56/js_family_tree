@@ -233,6 +233,31 @@ function collapse(id) {
     });
 }
 
+// Keep expanding until nobody visible has anything hidden around them.
+// Everyone connected to the start person ends up shown.
+function expandAll() {
+    var changed = true;
+    while (changed) {
+        changed = false;
+        Array.from(shown.keys()).forEach(id => {
+            if (expandable(id)) {
+                expand(id);
+                changed = true;
+            }
+        });
+    }
+}
+
+// Back to just the start person
+function collapseAll() {
+    shown.clear();
+    shown.set(startId, null);
+}
+
+function anythingExpandable() {
+    return Array.from(shown.keys()).some(expandable);
+}
+
 // ****************** Layout ***************************
 
 // Node sizes in d3-dag's top-to-bottom terms: [along a generation, between
@@ -336,6 +361,25 @@ lastPos.set(startId, [screen_width / 2, screen_height / 2]);
 // draw the tree
 update(startId);
 
+// Expand all / collapse all buttons; transitions start from and end at the
+// start person, who stays where they are on screen
+d3.select("#expand-all").on("click", () => {
+    tip.hide();
+    expandAll();
+    update(startId, { fit: true });
+});
+d3.select("#collapse-all").on("click", () => {
+    tip.hide();
+    collapseAll();
+    update(startId, { recenter: true });
+});
+
+// Disable whichever button would do nothing
+function updateToolbar() {
+    d3.select("#expand-all").property("disabled", !anythingExpandable());
+    d3.select("#collapse-all").property("disabled", shown.size <= 1);
+}
+
 // Finds the oldest person in the data set (fallback when data.start is missing).
 // People without a known birth year are only picked if nobody has one.
 function findOldestPerson(nodeList)
@@ -421,7 +465,35 @@ function tweenPoints(target) {
     };
 }
 
-function update(sourceId) {
+// Zoom transform that fits the given nodes (circles and labels) into the
+// space below the toolbar, centred, never zooming in past 100%
+function fitTransform(nodeSelection) {
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodeSelection.each(function (d) {
+        var box = this.getBBox();
+        minX = Math.min(minX, d.x + box.x);
+        minY = Math.min(minY, d.y + box.y);
+        maxX = Math.max(maxX, d.x + box.x + box.width);
+        maxY = Math.max(maxY, d.y + box.y + box.height);
+    });
+    var margin = 20;
+    var top = document.getElementById("toolbar").getBoundingClientRect().bottom + margin;
+    var availW = +svg.attr("width") - 2 * margin;
+    var availH = +svg.attr("height") - top - margin;
+    var w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
+    var k = Math.min(availW / w, availH / h, 1);
+    return d3.zoomIdentity
+        .translate(margin + (availW - k * w) / 2 - k * minX, top + (availH - k * h) / 2 - k * minY)
+        .scale(k);
+}
+
+// Redraw the visible tree. Transitions start from / end at sourceId, which
+// stays put on screen, unless an option says otherwise:
+//   fit:      zoom to fit the whole visible tree
+//   recenter: back to 100% with sourceId in the middle, as on page load
+function update(sourceId, options) {
+    var fit = !!(options && options.fit);
+    var recenter = !!(options && options.recenter);
 
     var graph = layoutVisible();
 
@@ -541,16 +613,20 @@ function update(sourceId) {
         })
         .remove();
 
-    // Keep the clicked node where it was on screen, even if the layout moved it
+    // Fit everything on screen, recentre, or keep the clicked node where it
+    // was on screen even if the layout moved it
+    var view;
+    if (fit) view = fitTransform(nodeUpdate);
+    else if (recenter) view = d3.zoomIdentity.translate(+svg.attr("width") / 2 - sourceNew[0], +svg.attr("height") / 2 - sourceNew[1]);
+    else view = d3.zoomTransform(g.node()).translate(-(sourceNew[0] - sourceOld[0]), -(sourceNew[1] - sourceOld[1]));
     svg.transition()
         .duration(duration)
-        .call(
-            zoom.transform,
-            d3.zoomTransform(g.node()).translate(-(sourceNew[0] - sourceOld[0]), -(sourceNew[1] - sourceOld[1])),
-        );
+        .call(zoom.transform, view);
 
     // Store the positions for the next transition.
     lastPos = newPos;
+
+    updateToolbar();
 
     // Toggle unions, children, partners on click.
     function click(d) {
