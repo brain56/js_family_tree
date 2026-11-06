@@ -1,17 +1,3 @@
-// extend javascript array class by a remove function
-// copied from https://stackoverflow.com/a/3955096/12267732
-Array.prototype.remove = function () 
-{
-    var what, a = arguments, L = a.length, ax;
-    while (L && this.length) {
-        what = a[--L];
-        while ((ax = this.indexOf(what)) !== -1) {
-            this.splice(ax, 1);
-        }
-    }
-    return this;
-};
-
 // ****************** Configuration ***************************
 
 // Defaults. Any of these can be overridden by a "config" block in the data file.
@@ -136,15 +122,142 @@ function buildFamilyGraph(data) {
 buildFamilyGraph(data);
 
 // mark unions
-for (var k in data.unions) 
+for (var k in data.unions)
 {
     data.unions[k].isUnion = true
 }
 // mark persons
-for (var k in data.persons) 
+for (var k in data.persons)
 {
     data.persons[k].isUnion = false
 }
+
+// ****************** Family model ***************************
+
+// Person or union data for an id
+function lookup(id) {
+    return data.persons[id] || data.unions[id];
+}
+
+// Direct graph neighbours: a person's unions (own and parent), or a union's
+// partners and children
+function neighbors(id) {
+    var d = lookup(id);
+    if (!d) return [];
+    return d.isUnion
+        ? d.partner.concat(d.children)
+        : d.own_unions.concat(d.parent_unions);
+}
+
+// Everything one click on a person reveals: their unions plus every partner
+// and child of those unions (parents, siblings, partners, children)
+function revealSet(personId) {
+    var result = [];
+    neighbors(personId).forEach(unionId => {
+        result.push(unionId);
+        neighbors(unionId).forEach(id => {
+            if (id !== personId) result.push(id);
+        });
+    });
+    return result;
+}
+
+// ****************** Visibility state ***************************
+
+// id -> id of the person whose click revealed it (null for the start person)
+var shown = new Map();
+
+function isShown(id) {
+    return shown.has(id);
+}
+
+function expandable(id) {
+    var d = lookup(id);
+    if (!d || d.isUnion) return false;
+    return revealSet(id).some(n => !isShown(n));
+}
+
+function expand(id) {
+    revealSet(id).forEach(n => {
+        if (!isShown(n)) shown.set(n, id);
+    });
+}
+
+// Hide everything this person's click revealed, and anything revealed from
+// those nodes in turn; then hide whatever is no longer connected to the start
+// person, so no pieces are left floating. The clicked person and the start
+// person always stay visible.
+function collapse(id) {
+    var hide = new Set();
+    var changed = true;
+    while (changed) {
+        changed = false;
+        shown.forEach((owner, n) => {
+            if (hide.has(n) || n === id || n === startId) return;
+            if (owner === id || hide.has(owner)) {
+                hide.add(n);
+                changed = true;
+            }
+        });
+    }
+    hide.forEach(n => shown.delete(n));
+
+    var reachable = new Set([startId]);
+    var queue = [startId];
+    while (queue.length) {
+        neighbors(queue.shift()).forEach(n => {
+            if (isShown(n) && !reachable.has(n)) {
+                reachable.add(n);
+                queue.push(n);
+            }
+        });
+    }
+    Array.from(shown.keys()).forEach(n => {
+        if (!reachable.has(n)) shown.delete(n);
+    });
+}
+
+// ****************** Layout ***************************
+
+// Node sizes in d3-dag's top-to-bottom terms: [along a generation, between
+// generations]. With the left-to-right layout this is [vertical, horizontal].
+var PERSON_SIZE = [50, 120];
+var UNION_SIZE = [10, 120];
+
+function makeLayout(decross) {
+    return d3.sugiyama()
+        .layering(d3.layeringSimplex())
+        .decross(decross)
+        .coord(d3.coordSimplex())
+        .nodeSize(n => {
+            var d = n && lookup(n.data);
+            return d && !d.isUnion ? PERSON_SIZE : UNION_SIZE;
+        })
+        .gap([0, 0])
+        .tweaks([d3.tweakDirection("LR")]);
+}
+
+// Optimal crossing reduction looks best but refuses large graphs; fall back
+// to the fast heuristic when it does
+var bestLayout = makeLayout(d3.decrossOpt());
+var fastLayout = makeLayout(d3.decrossTwoLayer());
+var connect = d3.graphConnect().single(true);
+
+// Build a graph of just the visible nodes and lay it out
+function layoutVisible() {
+    var links = data.links.filter(l => isShown(l[0]) && isShown(l[1]));
+    if (links.length === 0) links = [[startId, startId]];
+    var graph = connect(links);
+    try {
+        bestLayout(graph);
+    } catch (e) {
+        graph = connect(links);
+        fastLayout(graph);
+    }
+    return graph;
+}
+
+// ****************** Rendering ***************************
 
 // Set the dimensions and margins of the diagram
 var screen_width = document.body.offsetWidth;
@@ -188,66 +301,24 @@ const svg = d3.select("body").append("svg")
 // append group element
 const g = svg.append("g");
 
-// helper variables
-var i = 0;
 var duration = 750;
-var x_sep = 120;
-var y_sep = 50;
 
-// declare a dag layout
-var tree = d3.sugiyama()
-    .nodeSize([y_sep, x_sep])
-    .layering(d3.layeringSimplex())
-    .decross(d3.decrossOpt)
-    .coord(d3.coordVert())
-    .separation(
-        (a, b) => { return 1 }
-    );
+// Last drawn position of every node, by id, for transitions
+var lastPos = new Map();
 
-// make dag from edge list
-dag = d3.dagConnect()(data.links);
-
-// in order to make the family tree work, the dag
-// must be a node with id undefined. create that node if
-// not done automaticaly
-if(dag.id !=undefined)
-{
-    root = dag.copy();
-    root.id = undefined;
-    root.children = [dag];
-    dag = root;
+// Start person (data.start), falling back to the oldest person
+var startId = data.start;
+if (!data.persons[startId]) {
+    var oldest = findOldestPerson(Object.keys(data.persons).map(id => ({ id: id, data: data.persons[id] })));
+    console.warn("Family tree: start person '" + data.start + "' not found; starting at oldest person '" + (oldest && oldest.id) + "' instead.");
+    startId = oldest && oldest.id;
 }
+shown.set(startId, null);
+// the start person first appears in the middle of the screen
+lastPos.set(startId, [screen_width / 2, screen_height / 2]);
 
-// prepare node data
-var all_nodes = dag.descendants()
-
-all_nodes.forEach(node => {
-    node.data = data.persons[node.id] ? data.persons[node.id] : data.unions[node.id];
-    node._children = node.children; // all nodes collapsed by default
-    node.children = [];
-    node.inserted_nodes = [];
-    node.inserted_roots = [];
-    node.neighbors = [];
-    node.visible = false;
-    node.inserted_connections = [];
-});
-
-// find root node (data.start) and assign data
-root = all_nodes.find(n => n.id == data.start);
-if (!root) {
-    root = findOldestPerson(all_nodes);
-    console.warn("Family tree: start person '" + data.start + "' not found; starting at oldest person '" + (root && root.id) + "' instead.");
-}
-root.visible = true;
-root.neighbors = getNeighbors(root);
-root.x0 = screen_height / 2;
-root.y0 = screen_width / 2;
-
-// overwrite dag root nodes
-dag.children = [root];
-
-// draw dag
-update(root);
+// draw the tree
+update(startId);
 
 // Finds the oldest person in the data set (fallback when data.start is missing).
 // People without a known birth year are only picked if nobody has one.
@@ -266,225 +337,6 @@ function findOldestPerson(nodeList)
 		}
 	});
 	return oldestPerson;
-}
-
-// collapse a node
-function collapse(d) {
-
-    // remove root nodes and circle-connections
-    var remove_inserted_root_nodes = n => {
-        // remove all inserted root nodes
-        dag.children = dag.children.filter(c => !n.inserted_roots.includes(c));
-        // remove inserted connections
-        n.inserted_connections.forEach(
-            arr => {
-                // check existence to prevent double entries
-                // which will cause crashes
-                if (arr[0].children.includes(arr[1])) {
-                    arr[0]._children.push(arr[1]);
-                    arr[0].children.remove(arr[1]);
-                }
-            }
-        )
-        // repeat for all inserted nodes
-        n.inserted_nodes.forEach(remove_inserted_root_nodes);
-    };
-    remove_inserted_root_nodes(d);
-
-    // collapse neighbors which are visible and have been inserted by this node
-    var vis_inserted_neighbors = d.neighbors.filter(n => n.visible & d.inserted_nodes.includes(n));
-    vis_inserted_neighbors.forEach(
-        n => {
-            // tag invisible
-            n.visible = false;
-            // if child, delete connection
-            if (d.children.includes(n)) {
-                d._children.push(n);
-                d.children.remove(n);
-            }
-            // if parent, delete connection
-            if (n.children.includes(d)) {
-                n._children.push(d);
-                n.children.remove(d);
-            }
-            // if union, collapse the union
-            if (n.data.isUnion) {
-                collapse(n);
-            }
-            // remove neighbor handle from clicked node
-            d.inserted_nodes.remove(n);
-        }
-    );
-}
-
-// uncollapse a node
-function uncollapse(d, make_roots) {
-
-    if (d == undefined) return;
-
-    // neighbor nodes that are already visible (happens when 
-    // circles occur): make connections, save them to
-    // destroy / rebuild on collapse
-    var extended_neighbors = d.neighbors.filter(n => n.visible)
-    extended_neighbors.forEach(
-        n => {
-            // if child, make connection
-            if (d._children.includes(n)) {
-                d.inserted_connections.push([d, n]);
-            }
-            // if parent, make connection
-            if (n._children.includes(d)) {
-                d.inserted_connections.push([n, d]);
-            }
-        }
-    )
-
-    // neighbor nodes that are invisible: make visible, make connections, 
-    // add root nodes, add to inserted_nodes
-    var collapsed_neighbors = d.neighbors.filter(n => !n.visible);
-    collapsed_neighbors.forEach(
-        n => {
-            // collect neighbor data
-            n.neighbors = getNeighbors(n);
-            // tag visible
-            n.visible = true;
-            // if child, make connection
-            if (d._children.includes(n)) {
-                d.children.push(n);
-                d._children.remove(n);
-            }
-            // if parent, make connection
-            if (n._children.includes(d)) {
-                n.children.push(d);
-                n._children.remove(d);
-                // insert root nodes if flag is set
-                if (make_roots & !d.inserted_roots.includes(n)) {
-                    d.inserted_roots.push(n);
-                }
-            }
-            // if union, uncollapse the union
-            if (n.data.isUnion) {
-                uncollapse(n, true);
-            }
-            // save neighbor handle in clicked node
-            d.inserted_nodes.push(n);
-        }
-    )
-
-    // make sure this step is done only once
-    if (!make_roots) {
-        var add_root_nodes = n => {
-            // add previously inserted root nodes (partners, parents)
-            n.inserted_roots.forEach(p => dag.children.push(p));
-            // add previously inserted connections (circles)
-            n.inserted_connections.forEach(
-                arr => {
-                    // check existence to prevent double entries
-                    // which will cause crashes
-                    if (arr[0]._children.includes(arr[1])) {
-                        arr[0].children.push(arr[1]);
-                        arr[0]._children.remove(arr[1]);
-                    }
-                }
-            )
-            // repeat with all inserted nodes
-            n.inserted_nodes.forEach(add_root_nodes)
-        };
-        add_root_nodes(d);
-    }
-}
-
-function is_extendable(node) {
-    return node.neighbors.filter(n => !n.visible).length > 0
-}
-
-function getNeighbors(node) {
-    if (node.data.isUnion) {
-        return getChildren(node)
-            .concat(getPartners(node))
-    }
-    else {
-        return getOwnUnions(node)
-            .concat(getParentUnions(node))
-    }
-}
-
-function getParentUnions(node) {
-    if (node == undefined) return [];
-    if (node.data.isUnion) return [];
-    return (node.data.parent_unions || [])
-        .map(u_id => all_nodes.find(n => n.id == u_id))
-        .filter(u => u != undefined);
-}
-
-function getParents(node) {
-    var parents = [];
-    if (node.data.isUnion) {
-        node.data.partner.forEach(
-            p_id => parents.push(all_nodes.find(n => n.id == p_id))
-        );
-    }
-    else {
-        var parent_unions = getParentUnions(node);
-        parent_unions.forEach(
-            u => parents = parents.concat(getParents(u))
-        );
-    }
-    return parents.filter(p => p != undefined)
-}
-
-function getOtherPartner(node, union_data) {
-    var partner_id = union_data.partner.find(
-        p_id => p_id != node.id & p_id != undefined
-    );
-    return all_nodes.find(n => n.id == partner_id)
-}
-
-function getPartners(node) {
-    var partners = [];
-    // return both partners if node argument is a union
-    if (node.data.isUnion) {
-        node.data.partner.forEach(
-            p_id => partners.push(all_nodes.find(n => n.id == p_id))
-        )
-    }
-    // return other partner of all unions if node argument is a person
-    else {
-        var own_unions = getOwnUnions(node);
-        own_unions.forEach(
-            u => {
-                partners.push(getOtherPartner(node, u.data))
-            }
-        )
-    }
-    return partners.filter(p => p != undefined)
-}
-
-function getOwnUnions(node) {
-    if (node.data.isUnion) return [];
-    var unions = [];
-    (node.data.own_unions || []).forEach(
-        u_id => unions.push(all_nodes.find(n => n.id == u_id))
-    );
-    return unions.filter(u => u != undefined)
-}
-
-function getChildren(node) {
-    var children = [];
-    if (node.data.isUnion) {
-        children = node.children.concat(node._children);
-    }
-    else {
-        own_unions = getOwnUnions(node);
-        own_unions.forEach(
-            u => children = children.concat(getChildren(u))
-        )
-    }
-    // sort children by birth year, filter undefined
-    children = children
-        .filter(c => c != undefined)
-        .sort((a, b) => Math.sign((getBirthYear(a) || 0) - (getBirthYear(b) || 0)));
-    return children
 }
 
 // True if a data field is actually filled in (not undefined, null or "")
@@ -510,61 +362,87 @@ function getDeathYear(node) {
     return parseInt(node.data.deathyear, 10)
 }
 
-function find_path(n) {
-    var parents = getParents(n);
-    var found = false;
-    var result = null;
-    parents.forEach(
-        p => {
-            if (p && !found) {
-                if (p.id == "profile-89285291") {
-                    found = true;
-                    result = [p, n];
-                }
-                else {
-                    result = find_path(p);
-                    if (result) {
-                        found = true;
-                        result.push(n)
-                    }
-                }
-            }
-        }
-    )
-    return result
+// Step-parent links: a step-parent's line into a union, or any line of a
+// step-only union (step-child with no known bio parents)
+function isStepLink(sourceId, targetId) {
+    var s = lookup(sourceId), t = lookup(targetId);
+    if (!s || !t) return false;
+    if (s.isStep || t.isStep) return true;
+    return !!(t.isUnion && t.stepPartners && t.stepPartners.includes(sourceId));
 }
 
-function update(source) {
+// S-curve through a list of [x, y] points: each segment is a cubic curve with
+// both control points at the segment's horizontal midpoint
+function curvePath(points) {
+    var path = "M " + points[0][0] + " " + points[0][1];
+    for (var j = 1; j < points.length; j++) {
+        var p = points[j - 1], q = points[j];
+        var mx = (p[0] + q[0]) / 2;
+        path += " C " + mx + " " + p[1] + ", " + mx + " " + q[1] + ", " + q[0] + " " + q[1];
+    }
+    return path;
+}
 
-    // Assigns the x and y position for the nodes
-    var dag_tree = tree(dag),
-        nodes = dag.descendants(),
-        links = dag.links();
+// Pad a point list to n points by repeating its last point, so two paths
+// with different numbers of bends can be interpolated
+function padPoints(points, n) {
+    var out = points.slice();
+    while (out.length < n) out.push(out[out.length - 1]);
+    return out;
+}
+
+// Transition a link's path from its current points to target points
+function tweenPoints(target) {
+    return function () {
+        var from = this.__points || target.map(() => target[0]);
+        var n = Math.max(from.length, target.length);
+        var a = padPoints(from, n), b = padPoints(target, n);
+        this.__points = target;
+        return t => curvePath(a.map((p, j) => [
+            p[0] + (b[j][0] - p[0]) * t,
+            p[1] + (b[j][1] - p[1]) * t
+        ]));
+    };
+}
+
+function update(sourceId) {
+
+    var graph = layoutVisible();
+
+    var nodes = Array.from(graph.nodes()).map(n => ({
+        id: n.data,
+        data: lookup(n.data),
+        x: n.x,
+        y: n.y
+    }));
+    var links = Array.from(graph.links()).map(l => ({
+        id: l.source.data + "->" + l.target.data,
+        source: l.source.data,
+        target: l.target.data,
+        points: l.points
+    }));
+
+    var newPos = new Map(nodes.map(n => [n.id, [n.x, n.y]]));
+    var sourceOld = lastPos.get(sourceId) || newPos.get(sourceId);
+    var sourceNew = newPos.get(sourceId);
 
     // ****************** Nodes section ***************************
 
-    // Update the nodes...
     var node = g.selectAll('g.node')
-        .data(nodes, function (d) { return d.id || (d.id = ++i); })
+        .data(nodes, d => d.id);
 
-    // Enter any new nodes at the parent's previous position.
+    // Enter any new nodes at the clicked node's previous position.
     var nodeEnter = node.enter().append('g')
         .attr('class', 'node')
-        .attr("transform", function (d) {
-            return "translate(" + source.y0 + "," + source.x0 + ")";
-        })
+        .attr("transform", "translate(" + sourceOld[0] + "," + sourceOld[1] + ")")
         .on('click', click)
         .on('mouseover', tip.show)
-        .on('mouseout', tip.hide)
-        .attr('visible', true);
+        .on('mouseout', tip.hide);
 
     // Add Circle for the nodes
     nodeEnter.append('circle')
         .attr('class', 'node')
-        .attr('r', 1e-6)
-        .style("fill", function (d) {
-            return is_extendable(d) ? "lightsteelblue" : "#fff";
-        });
+        .attr('r', 1e-6);
 
     // Add names as node labels
     nodeEnter.append('text')
@@ -590,26 +468,18 @@ function update(source) {
     // Transition to the proper position for the node
     nodeUpdate.transition()
         .duration(duration)
-        .attr("transform", function (d) {
-            return "translate(" + d.y + "," + d.x + ")";
-        });
+        .attr("transform", d => "translate(" + d.x + "," + d.y + ")");
 
     // Update the node attributes and style
     nodeUpdate.select('circle.node')
-        .attr('r', d => 10 * !d.data.isUnion + 0 * d.data.isUnion)
-        .style("fill", function (d) {
-            return is_extendable(d) ? "lightsteelblue" : "#fff";
-        })
+        .attr('r', d => d.data.isUnion ? 0 : 10)
+        .style("fill", d => expandable(d.id) ? "lightsteelblue" : "#fff")
         .attr('cursor', 'pointer');
 
-
-    // Remove any exiting nodes
+    // Remove any exiting nodes into the clicked node's new position
     var nodeExit = node.exit().transition()
         .duration(duration)
-        .attr("transform", function (d) {
-            return "translate(" + source.y + "," + source.x + ")";
-        })
-        .attr('visible', false)
+        .attr("transform", "translate(" + sourceNew[0] + "," + sourceNew[1] + ")")
         .remove();
 
     // On exit reduce the node circles size to 0
@@ -622,75 +492,49 @@ function update(source) {
 
     // ****************** links section ***************************
 
-    // Update the links...
     var link = g.selectAll('path.link')
-        .data(links, function (d) { return d.source.id + d.target.id });
+        .data(links, d => d.id);
 
-    // Enter any new links at the parent's previous position.
+    // Enter any new links collapsed at the clicked node's previous position.
     var linkEnter = link.enter().insert('path', "g")
         .attr("class", "link")
-        .attr('d', function (d) {
-            var o = { x: source.x0, y: source.y0 }
-            return diagonal(o, o)
-        });
+        .each(function (d) { this.__points = d.points.map(() => sourceOld); })
+        .attr('d', function () { return curvePath(this.__points); });
 
     // UPDATE
     var linkUpdate = linkEnter.merge(link);
 
-    // Style step-parent links: a step-parent's line into a union, or any
-    // line of a step-only union (step-child with no known bio parents)
-    var isStepLink = d => {
-        var s = d.source.data, t = d.target.data;
-        if (!s || !t) return false;
-        if (s.isStep || t.isStep) return true;
-        return !!(t.isUnion && t.stepPartners && t.stepPartners.includes(d.source.id));
-    };
     linkUpdate
-        .classed("step", isStepLink)
-        .style("stroke", d => isStepLink(d) ? config.stepLink.color : null)
-        .style("stroke-dasharray", d => isStepLink(d) ? config.stepLink.dash : null)
-        .style("stroke-width", d => isStepLink(d) ? config.stepLink.width : null);
+        .classed("step", d => isStepLink(d.source, d.target))
+        .style("stroke", d => isStepLink(d.source, d.target) ? config.stepLink.color : null)
+        .style("stroke-dasharray", d => isStepLink(d.source, d.target) ? config.stepLink.dash : null)
+        .style("stroke-width", d => isStepLink(d.source, d.target) ? config.stepLink.width : null);
 
-    // Transition back to the parent element position
+    // Follow the layout's route for each link, so long links bend around
+    // people instead of crossing them
     linkUpdate.transition()
         .duration(duration)
-        .attr('d', d => diagonal(d.source, d.target));
+        .attrTween('d', function (d) { return tweenPoints(d.points).call(this); });
 
-    // Remove any exiting links
-    var linkExit = link.exit().transition()
+    // Remove any exiting links into the clicked node's new position
+    link.exit().transition()
         .duration(duration)
-        .attr('d', function (d) {
-            var o = { x: source.x, y: source.y }
-            return diagonal(o, o)
+        .attrTween('d', function () {
+            var target = (this.__points || [sourceNew]).map(() => sourceNew);
+            return tweenPoints(target).call(this);
         })
         .remove();
 
-    // expanding a big subgraph moves the entire dag out of the window
-    // to prevent this, cancel any transformations in y-direction
+    // Keep the clicked node where it was on screen, even if the layout moved it
     svg.transition()
         .duration(duration)
         .call(
             zoom.transform,
-            d3.zoomTransform(g.node()).translate(-(source.y - source.y0), -(source.x - source.x0)),
+            d3.zoomTransform(g.node()).translate(-(sourceNew[0] - sourceOld[0]), -(sourceNew[1] - sourceOld[1])),
         );
 
-    // Store the old positions for transition.
-    nodes.forEach(function (d) {
-        d.x0 = d.x;
-        d.y0 = d.y;
-    });
-
-
-    // Creates a curved (diagonal) path from parent to the child nodes
-    function diagonal(s, d) {
-
-        path = `M ${s.y} ${s.x}
-    C ${(s.y + d.y) / 2} ${s.x},
-        ${(s.y + d.y) / 2} ${d.x},
-        ${d.y} ${d.x}`
-
-        return path
-    }
+    // Store the positions for the next transition.
+    lastPos = newPos;
 
     // Toggle unions, children, partners on click.
     function click(d) {
@@ -698,11 +542,10 @@ function update(source) {
         // do nothing if node is union
         if (d.data.isUnion) return;
 
-        // uncollapse if there are uncollapsed unions / children / partners
-        if (is_extendable(d)) uncollapse(d)
-        // collapse if fully uncollapsed
-        else collapse(d)
+        // expand if anything around this person is hidden, else collapse
+        if (expandable(d.id)) expand(d.id);
+        else collapse(d.id);
 
-        update(d);
+        update(d.id);
     }
 }
