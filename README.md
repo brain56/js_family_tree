@@ -22,3 +22,12 @@ New features:
 - nodes are collapsible in all directions: children, parents, partners (nodes memorize their dependencies)
 - use [d3-tip](https://github.com/caged/d3-tip) to show metadata on hover
 - use d3-zoom to enable zooming and panning
+
+## Updating the family data
+The tree reads `new_data.js`. To refresh it from a [Family Echo](https://www.familyecho.com/) CSV export:
+
+```
+python tools/csv_to_new_data.py path/to/export.csv
+```
+
+This rewrites the people, biological parents and partnerships from the CSV. The parts the export can't provide are kept as they are in `new_data.js`: `start`, `config` and `step_parenthood`.

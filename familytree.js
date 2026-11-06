@@ -16,9 +16,11 @@ var config = {
 
 // ****************** Data preparation ***************************
 
-// Build data.unions and data.links from data.bio_parenthood and
-// data.step_parenthood.
+// Build data.unions and data.links from data.bio_parenthood,
+// data.partnerships and data.step_parenthood.
 // - Each bio_parenthood entry becomes a union node: parents -> union -> children.
+// - Each partnerships entry without children together becomes a union with
+//   only the two partners.
 // - Step-parents join the union of their step-child's biological parents as
 //   extra partners (listed in union.stepPartners), so their line merges into
 //   the same union and a single line leads on to the child. Only the
@@ -86,6 +88,20 @@ function buildFamilyGraph(data) {
     (data.bio_parenthood || []).forEach(entry => {
         var e = readEntry(entry, "bio_parenthood");
         if (e) addUnion(e.parents, e.children, false);
+    });
+
+    // Partnerships: couples with children already have a union from
+    // bio_parenthood; couples without children get an empty one so they are
+    // still shown linked. The type ("current"/"ex") is kept on the union.
+    (data.partnerships || []).forEach(entry => {
+        var partners = (entry.partners || []).filter(id => personExists(id, "partnerships"));
+        if (partners.length < 2) {
+            console.warn("Family tree: partnerships entry needs two known people; ignoring.", entry);
+            return;
+        }
+        var unionId = "union:" + partners.slice().sort().join("+");
+        if (!data.unions[unionId]) addUnion(partners, [], false);
+        data.unions[unionId].partnershipType = entry.type;
     });
 
     for (var id in data.persons) {
