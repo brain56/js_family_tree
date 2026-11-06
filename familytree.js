@@ -12,6 +12,129 @@ Array.prototype.remove = function ()
     return this;
 };
 
+// ****************** Configuration ***************************
+
+// Defaults. Any of these can be overridden by a "config" block in the data file.
+var defaultConfig = {
+    // Lines that connect step-parents to their step-children
+    stepLink: {
+        color: "#e07b39",   // any CSS color
+        dash: "6,4",        // SVG stroke-dasharray; "" or null for a solid line
+        width: 2            // stroke width in px
+    }
+};
+var userConfig = data.config || {};
+var config = {
+    stepLink: Object.assign({}, defaultConfig.stepLink, userConfig.stepLink)
+};
+
+// ****************** Data preparation ***************************
+
+// Build data.unions and data.links from data.bio_parenthood and
+// data.step_parenthood.
+// - Each bio_parenthood entry becomes a union node: parents -> union -> children.
+// - Step-parents join the union of their step-child's biological parents as
+//   extra partners (listed in union.stepPartners), so their line merges into
+//   the same union and a single line leads on to the child. Only the
+//   step-parent -> union line is styled as a step link.
+// - If a step-child has no biological parents in the data, the step-parents
+//   get a union of their own (flagged isStep); all of its lines are step links.
+function buildFamilyGraph(data) {
+    data.unions = {};
+    data.links = [];
+
+    for (var id in data.persons) {
+        var person = data.persons[id];
+        person.id = person.id || id;
+        person.own_unions = [];
+        person.parent_unions = [];
+    }
+
+    var personExists = (id, context) => {
+        if (data.persons[id]) return true;
+        console.warn("Family tree: unknown person '" + id + "' in " + context + "; ignoring.");
+        return false;
+    };
+
+    // Returns the valid parents/children of an entry, or null if unusable.
+    var readEntry = (entry, context) => {
+        var parents = (entry.parents || []).filter(id => personExists(id, context));
+        var children = (entry.children || []).filter(id => personExists(id, context));
+        if (parents.length === 0 || children.length === 0) {
+            console.warn("Family tree: " + context + " entry needs at least one parent and one child; ignoring.", entry);
+            return null;
+        }
+        return { parents: parents, children: children };
+    };
+
+    var addPartner = (union, pid) => {
+        if (union.partner.includes(pid)) return false;
+        union.partner.push(pid);
+        data.persons[pid].own_unions.push(union.id);
+        return true;
+    };
+
+    var addUnion = (parents, children, isStep) => {
+        // ID depends only on the set of parents (order-independent) and the
+        // kind of parenthood, and is prefixed so it can't clash with a person ID.
+        var unionId = (isStep ? "step:" : "union:") + parents.slice().sort().join("+");
+        var union = data.unions[unionId];
+        if (!union) {
+            union = data.unions[unionId] = {
+                "id": unionId,
+                "partner": [],
+                "stepPartners": [],
+                "children": [],
+                "isStep": isStep
+            };
+            parents.forEach(pid => addPartner(union, pid));
+        }
+        children.forEach(cid => {
+            if (union.children.includes(cid)) return;
+            union.children.push(cid);
+            data.persons[cid].parent_unions.push(unionId);
+        });
+    };
+
+    // Biological parents
+    (data.bio_parenthood || []).forEach(entry => {
+        var e = readEntry(entry, "bio_parenthood");
+        if (e) addUnion(e.parents, e.children, false);
+    });
+
+    for (var id in data.persons) {
+        if (data.persons[id].parent_unions.length > 1) {
+            console.warn("Family tree: '" + id + "' has more than one set of biological parents; step-parents will join the first.", data.persons[id].parent_unions);
+        }
+    }
+
+    // Step-parents: merge into the child's biological union where there is one
+    (data.step_parenthood || []).forEach(entry => {
+        var e = readEntry(entry, "step_parenthood");
+        if (!e) return;
+        var orphans = [];
+        e.children.forEach(cid => {
+            var bioUnion = data.unions[data.persons[cid].parent_unions[0]];
+            if (!bioUnion) {
+                orphans.push(cid);
+                return;
+            }
+            e.parents.forEach(pid => {
+                if (addPartner(bioUnion, pid)) bioUnion.stepPartners.push(pid);
+            });
+        });
+        if (orphans.length > 0) addUnion(e.parents, orphans, true);
+    });
+
+    for (var unionId in data.unions) {
+        var union = data.unions[unionId];
+        union.partner.forEach(pid => data.links.push([pid, unionId]));
+        union.children.forEach(cid => data.links.push([unionId, cid]));
+    }
+}
+
+buildFamilyGraph(data);
+
 // mark unions
 for (var k in data.unions) 
 {
@@ -105,8 +228,12 @@ all_nodes.forEach(node => {
     node.inserted_connections = [];
 });
 
-// find root node and assign data
-root = findOldestPerson(all_nodes);
+// find root node (data.start) and assign data
+root = all_nodes.find(n => n.id == data.start);
+if (!root) {
+    root = findOldestPerson(all_nodes);
+    console.warn("Family tree: start person '" + data.start + "' not found; starting at oldest person '" + (root && root.id) + "' instead.");
+}
 root.visible = true;
 root.neighbors = getNeighbors(root);
 root.x0 = screen_height / 2;
@@ -118,18 +245,20 @@ dag.children = [root];
 // draw dag
 update(root);
 
-// Finds the oldest person in the data set
+// Finds the oldest person in the data set (fallback when data.start is missing).
+// People without a known birth year are only picked if nobody has one.
 function findOldestPerson(nodeList)
 {
-	var earliestBd = new Date("01-01-3000"); // Is there a Date.max()?
-	var oldestPerson;
-	nodeList.forEach( node => 
+	var people = nodeList.filter(node => node.data && !node.data.isUnion);
+	var oldestPerson = people[0];
+	var earliestYear = Infinity;
+	people.forEach( node =>
 	{
-		var currentNodeBd = new Date(node.data.birthyear);
-		if(currentNodeBd < earliestBd)
+		var year = getBirthYear(node);
+		if(year < earliestYear)
 		{
 			oldestPerson = node;
-			earliestBd = currentNodeBd;
+			earliestYear = year;
 		}
 	});
 	return oldestPerson;
@@ -279,12 +408,9 @@ function getNeighbors(node) {
 function getParentUnions(node) {
     if (node == undefined) return [];
     if (node.data.isUnion) return [];
-    var u_id = node.data.parent_union;
-    if (u_id) {
-        var union = all_nodes.find(n => n.id == u_id);
-        return [union].filter(u => u != undefined);
-    }
-    else return [];
+    return (node.data.parent_unions || [])
+        .map(u_id => all_nodes.find(n => n.id == u_id))
+        .filter(u => u != undefined);
 }
 
 function getParents(node) {
@@ -332,8 +458,8 @@ function getPartners(node) {
 
 function getOwnUnions(node) {
     if (node.data.isUnion) return [];
-    unions = [];
-    node.data.own_unions.forEach(
+    var unions = [];
+    (node.data.own_unions || []).forEach(
         u_id => unions.push(all_nodes.find(n => n.id == u_id))
     );
     return unions.filter(u => u != undefined)
@@ -357,12 +483,14 @@ function getChildren(node) {
     return children
 }
 
+// Years are stored as plain numbers (e.g. 1956). new Date(1956) would be read
+// as milliseconds since 1970, so parse the year directly. NaN if unknown.
 function getBirthYear(node) {
-    return new Date(node.data.birthyear || NaN).getFullYear()
+    return parseInt(node.data.birthyear, 10)
 }
 
 function getDeathYear(node) {
-    return new Date(node.data.deathyear || NaN).getFullYear()
+    return parseInt(node.data.deathyear, 10)
 }
 
 function find_path(n) {
@@ -493,6 +621,20 @@ function update(source) {
 
     // UPDATE
     var linkUpdate = linkEnter.merge(link);
+
+    // Style step-parent links: a step-parent's line into a union, or any
+    // line of a step-only union (step-child with no known bio parents)
+    var isStepLink = d => {
+        var s = d.source.data, t = d.target.data;
+        if (!s || !t) return false;
+        if (s.isStep || t.isStep) return true;
+        return !!(t.isUnion && t.stepPartners && t.stepPartners.includes(d.source.id));
+    };
+    linkUpdate
+        .classed("step", isStepLink)
+        .style("stroke", d => isStepLink(d) ? config.stepLink.color : null)
+        .style("stroke-dasharray", d => isStepLink(d) ? config.stepLink.dash : null)
+        .style("stroke-width", d => isStepLink(d) ? config.stepLink.width : null);
 
     // Transition back to the parent element position
     linkUpdate.transition()
