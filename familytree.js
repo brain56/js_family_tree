@@ -161,11 +161,15 @@ var tip = d3.tip()
     .html(
         function (d) {
             if (d.data.isUnion) return;
+            // the "died" row is left out entirely when there is no death year
+            var diedRow = hasValue(d.data.deathyear)
+                ? `<tr><td>died</td><td>` + d.data.deathyear + ` in ` + (d.data.deathplace||"?") + `</td></tr>`
+                : ``;
             var content = `
             <span style='margin-left: 2.5px;'><b>` + d.data.name + `</b></span><br>
             <table style="margin-top: 2.5px;">
                     <tr><td>born</td><td>` + (d.data.birthyear||"?") + ` in ` + (d.data.birthplace||"?") + `</td></tr>
-                    <tr><td>died</td><td>` + (d.data.deathyear||"?") + ` in ` + (d.data.deathplace||"?") + `</td></tr>
+                    ` + diedRow + `
             </table>
             `
             return content.replace(new RegExp("null", "g"), "?")
@@ -483,6 +487,19 @@ function getChildren(node) {
     return children
 }
 
+// True if a data field is actually filled in (not undefined, null or "")
+function hasValue(value) {
+    return value !== undefined && value !== null && value !== "";
+}
+
+// "1930 - 2010" when both years are known, "1992" when there is no death
+// year, "? - 2010" when only the death year is known, "" when neither is.
+function lifespanLabel(person) {
+    var born = hasValue(person.birthyear) ? person.birthyear : null;
+    if (!hasValue(person.deathyear)) return born === null ? "" : String(born);
+    return (born === null ? "?" : born) + " - " + person.deathyear;
+}
+
 // Years are stored as plain numbers (e.g. 1956). new Date(1956) would be read
 // as milliseconds since 1970, so parse the year directly. NaN if unknown.
 function getBirthYear(node) {
@@ -563,9 +580,7 @@ function update(source) {
         .text(
             function (d) {
                 if (d.data.isUnion) return;
-                return (d.data.birthyear||"?") +
-                    " - " +
-                    (d.data.deathyear||"?")
+                return lifespanLabel(d.data);
             }
         );
 
